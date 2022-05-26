@@ -14,8 +14,10 @@ from torchvision import datasets, transforms
 from pytorch_metric_learning import distances, losses, miners, reducers, testers
 from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
 
-from torchsummary import summary as summary_
+#from torchsummary import summary as summary_
 
+import numpy as np
+import matplotlib.pyplot as plt
 
 if torch.cuda.is_available():
     DEVICE = torch.device('cuda')
@@ -23,7 +25,12 @@ else:
     DEVICE = torch.device('cpu')
 print('Using PyTorch version:', torch.__version__, ' Device:', DEVICE)
 
+# Hyperparameter
+BATCH_SIZE = 256
+NUM_EPOCHS = 10
+EMBEDDING_DIM = 2
 
+# Model, methods
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -31,7 +38,7 @@ class Net(nn.Module):
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
         self.dropout1 = nn.Dropout2d(p = 0.25)
         self.dropout2 = nn.Dropout2d(p = 0.5)
-        self.fc1 = nn.Linear(9216, 128)
+        self.fc1 = nn.Linear(9216, EMBEDDING_DIM)
 
     def forward(self, x):
         x = self.conv1(x)
@@ -43,13 +50,35 @@ class Net(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc1(x)
         return x
-
+    
 def train(model, loss_func, mining_func, device, train_loader, optimizer, epoch):
     model.train()
     for batch_idx, (data, labels) in enumerate(train_loader):
         # data.shape : (batchsize, channel, height, width)
         # labels shape : (batchsize)
         data, labels = data.to(DEVICE), labels.to(DEVICE)
+        
+        ### plot scatter image for 1 batch###
+        if EMBEDDING_DIM <= 3 and batch_idx == 0:
+            temp_data, temp_label = data, labels
+            embeddings = model(temp_data).cpu().detach().numpy()
+            temp_label = temp_label.cpu().detach().numpy()
+            
+            figsize = 10
+            
+            if EMBEDDING_DIM == 2:
+                plt.figure(figsize=(figsize, figsize))
+                plt.scatter(embeddings[:, 0], embeddings[:, 1], 
+                            cmap='rainbow', c=temp_label, alpha=0.7, s=15)
+                
+            elif EMBEDDING_DIM == 3:
+                fig = plt.figure(figsize=(figsize, figsize))
+                ax = fig.add_subplot(111, projection='3d')
+                ax.scatter(embeddings[:, 0], embeddings[:, 1], 
+                            cmap='rainbow', c=temp_label, alpha=0.7, s=10)
+            
+            plt.show()
+        ### plot scatter image for batch-1### 
         
         optimizer.zero_grad()
         embeddings = model(data)
@@ -61,7 +90,7 @@ def train(model, loss_func, mining_func, device, train_loader, optimizer, epoch)
         
         log_interval = 20
         if batch_idx % log_interval == 0:
-            print("Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss = {}, Number of mined triplets = {}".format(
+            print("Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss = {},\tNumber of mined triplets = {}".format(
                 epoch, batch_idx * len(data), 
                 len(train_loader.dataset), 100. * batch_idx / len(train_loader), 
                 loss, mining_func.num_triplets))
@@ -84,15 +113,54 @@ def test(train_set, test_set, model, accuracy_calculator):
     print("Test set accuracy (Precision@1) = {}".format(accuracies["precision_at_1"]))
 
 
-# Hyperparameter
-BATCH_SIZE = 256
-NUM_EPOCHS = 2
+### Plot n-dim(n : 2-3) data scatter after train ###
+def plot_after_train(model, n_to_show = 1000, train_or_test = "train"):
+    grid_size = 15
+    figsize = 10
+    
+    if train_or_test == "train":
+        example_loader = torch.utils.data.DataLoader(dataset = train_dataset,
+                                                   batch_size=n_to_show,
+                                                   shuffle=True
+                                                   )
+    elif train_or_test == "test":
+        example_loader = torch.utils.data.DataLoader(dataset = test_dataset,
+                                                   batch_size=n_to_show,
+                                                   shuffle=False
+                                                   )
+    
+    for batch_idx, (data, labels) in enumerate(example_loader):
+        data, labels = data.to(DEVICE), labels
+        embeddings = model(data).cpu().detach().numpy()
+        
+        min_x = min(embeddings[:, 0]).item()
+        max_x = max(embeddings[:, 0]).item()
+        min_y = min(embeddings[:, 1]).item()
+        max_y = max(embeddings[:, 1]).item()
+        
+        if EMBEDDING_DIM == 2:
+            plt.figure(figsize=(figsize, figsize))
+            plt.scatter(embeddings[:, 0], embeddings[:, 1], 
+                        cmap='rainbow', c=labels, alpha=0.7, s=15)
+            
+        elif EMBEDDING_DIM == 3:
+            min_z = min(embeddings[:, 2]).item()
+            max_z = max(embeddings[:, 2]).item()
+        
+            fig = plt.figure(figsize=(figsize, figsize))
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(embeddings[:, 0], embeddings[:, 1], 
+                        cmap='rainbow', c=labels, alpha=0.7, s=10)
+        
+        plt.show()    
+        break
+
+# Dataset
 
 transform = transforms.Compose(
     [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
 )
 
-# Dataset
 train_dataset = datasets.MNIST(root = "./data",
                                train = True,
                                download = True,
@@ -132,4 +200,6 @@ accuracy_calculator = AccuracyCalculator(include=("precision_at_1",), k=1)
 for epoch in range(1, NUM_EPOCHS + 1):
     train(model, loss_func, mining_func, DEVICE, train_loader, optimizer, epoch)
     test(train_dataset, test_dataset, model, accuracy_calculator)
-    
+
+plot_after_train(model, train_or_test="train")
+plot_after_train(model, train_or_test="test")
