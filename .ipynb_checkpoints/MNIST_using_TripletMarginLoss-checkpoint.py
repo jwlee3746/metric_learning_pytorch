@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue May 24 16:17:10 2022
+Created on Mon May 23 13:13:32 2022
 
 @author: Jaewon
 """
@@ -11,31 +11,30 @@ import torch.optim as optim
 
 from torchvision import datasets, transforms
 
-from pytorch_metric_learning import losses, testers
+from pytorch_metric_learning import distances, losses, miners, reducers, testers
 from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
 
 #from torchsummary import summary as summary_
 
 import numpy as np
 import matplotlib.pyplot as plt
-import torchvision
 
-if torch.cuda.is_available():   
+if torch.cuda.is_available():
     DEVICE = torch.device('cuda')
 else:
     DEVICE = torch.device('cpu')
 print('Using PyTorch version:', torch.__version__, ' Device:', DEVICE)
 
 # Hyperparameter
-BATCH_SIZE = 64
-NUM_EPOCHS = 2
-EMBEDDING_DIM = 128
+BATCH_SIZE = 256
+NUM_EPOCHS = 10
+EMBEDDING_DIM = 2
 
 # Model, methods
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, 3, 1) #(in_channels, out_channels, kernel_size, stride)
+        self.conv1 = nn.Conv2d(1, 32, 3, 1)
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
         self.dropout1 = nn.Dropout2d(p = 0.25)
         self.dropout2 = nn.Dropout2d(p = 0.5)
@@ -51,8 +50,8 @@ class Net(nn.Module):
         x = torch.flatten(x, 1)
         x = self.fc1(x)
         return x
-
-def train(model, loss_func, device, train_loader, optimizer, loss_optimizer, epoch):
+    
+def train(model, loss_func, mining_func, device, train_loader, optimizer, epoch):
     model.train()
     for batch_idx, (data, labels) in enumerate(train_loader):
         # data.shape : (batchsize, channel, height, width)
@@ -82,22 +81,19 @@ def train(model, loss_func, device, train_loader, optimizer, loss_optimizer, epo
         ### plot scatter image for batch-1### 
         
         optimizer.zero_grad()
-        loss_optimizer.zero_grad()
-        
         embeddings = model(data)
+        indices_tuple = mining_func(embeddings, labels)
         
-        loss = loss_func(embeddings, labels)
+        loss = loss_func(embeddings, labels, indices_tuple)
         loss.backward()
         optimizer.step()
-        loss_optimizer.step()
         
-        log_interval = 100
+        log_interval = 20
         if batch_idx % log_interval == 0:
-            print("Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss = {}".format(
-                epoch, batch_idx * len(data), len(train_loader.dataset), 100. * batch_idx / len(train_loader), 
-                loss
-                )
-            )
+            print("Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss = {},\tNumber of mined triplets = {}".format(
+                epoch, batch_idx * len(data), 
+                len(train_loader.dataset), 100. * batch_idx / len(train_loader), 
+                loss, mining_func.num_triplets))
 
 ### convenient function from pytorch-metric-learning ###
 def get_all_embeddings(dataset, model):
@@ -115,6 +111,7 @@ def test(train_set, test_set, model, accuracy_calculator):
         test_embeddings, train_embeddings, test_labels, train_labels, False
     )
     print("Test set accuracy (Precision@1) = {}".format(accuracies["precision_at_1"]))
+
 
 ### Plot n-dim(n : 2-3) data scatter after train ###
 def plot_after_train(model, n_to_show = 1000, train_or_test = "train"):
@@ -160,10 +157,8 @@ def plot_after_train(model, n_to_show = 1000, train_or_test = "train"):
 
 # Dataset
 
-img_mean, img_std = (0.1307,), (0.3081,)
-
 transform = transforms.Compose(
-    [transforms.ToTensor(), transforms.Normalize(img_mean, img_std)]
+    [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
 )
 
 train_dataset = datasets.MNIST(root = "./data",
@@ -185,52 +180,26 @@ train_loader = torch.utils.data.DataLoader(dataset = train_dataset,
 test_loader = torch.utils.data.DataLoader(dataset = test_dataset,
                                            batch_size=BATCH_SIZE,
                                            shuffle=False
-                                           )    
+                                           )
 
 
 model = Net().to(DEVICE)
 optimizer = optim.Adam(model.parameters(), lr=0.01)
+#print(summary_(model, (1,28,28)))
 
 ### pytorch-metric-learning stuff ###
-loss_func = losses.SubCenterArcFaceLoss(num_classes=10, embedding_size=EMBEDDING_DIM).to(DEVICE)
-loss_optimizer = torch.optim.Adam(loss_func.parameters(), lr=1e-4)
+distance = distances.CosineSimilarity()
+reducer = reducers.ThresholdReducer(low=0)
+loss_func = losses.TripletMarginLoss(margin=0.2, distance=distance, reducer=reducer)
+mining_func = miners.TripletMarginMiner(
+    margin=0.2, distance=distance, type_of_triplets="semihard"
+)
 accuracy_calculator = AccuracyCalculator(include=("precision_at_1",), k=1)
 ### pytorch-metric-learning stuff ###
 
 for epoch in range(1, NUM_EPOCHS + 1):
-    train(model, loss_func, DEVICE, train_loader, optimizer, loss_optimizer, epoch)
+    train(model, loss_func, mining_func, DEVICE, train_loader, optimizer, epoch)
     test(train_dataset, test_dataset, model, accuracy_calculator)
 
-if EMBEDDING_DIM <= 3:
-    plot_after_train(model, train_or_test="train")
-    plot_after_train(model, train_or_test="test")
-
-### View some sample outliers
-train_embeddings, train_labels = get_all_embeddings(train_dataset, model)
-outliers, dominant_centers = loss_func.get_outliers(train_embeddings, train_labels.squeeze(1), return_dominant_centers=True)
-print(f"\nThere are {len(outliers)} outliers")
-
-inv_normalize = transforms.Normalize(
-    mean=[-m / s for m, s in zip(img_mean, img_std)], std=[1 / s for s in img_std]
-)
-
-
-def imshow(img, figsize=(8, 4)):
-    img = inv_normalize(img)
-    npimg = img.numpy()
-    plt.figure(figsize=figsize)
-    plt.imshow(np.transpose(npimg, (1, 2, 0)))
-    plt.show()
-
-
-def imshow_many(dataset, outliers, n=32):
-    imgs = [
-        dataset[outliers[i]][0]
-        for i in np.random.choice(
-            len(outliers), size=min(n, len(outliers)), replace=False
-        )
-    ]
-    imshow(torchvision.utils.make_grid(imgs))
-
-imshow_many(train_dataset, outliers)
-### View some sample outliers
+plot_after_train(model, train_or_test="train")
+plot_after_train(model, train_or_test="test")
