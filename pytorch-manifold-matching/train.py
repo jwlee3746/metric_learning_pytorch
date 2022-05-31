@@ -1,5 +1,6 @@
 import argparse
 import os
+import datetime
 from math import log10,exp,sqrt
 import numpy as np
 import scipy.spatial
@@ -27,18 +28,20 @@ from model import Generator64, ML64
 
 parser = argparse.ArgumentParser(description='Train Image Generation Models')
 parser.add_argument('--data_path', default='D:\GAN\data\celeb\mini_celeba', type=str, help='dataset path')
+parser.add_argument('--data_name', default='celeba', type=str, help='dataset name')
 parser.add_argument('--name', default='results', type=str, help='path to store results')
 parser.add_argument('--size', default=64, type=int, help='training images size')
 parser.add_argument('--out_dim', default=10, type=int, help='ML network output dim')
-parser.add_argument('--num_epochs', default=80, type=int, help='train epoch number')
+parser.add_argument('--num_epochs', default=20, type=int, help='train epoch number')
 parser.add_argument('--num_samples', default=64, type=int, help='number of displayed samples')
 parser.add_argument('--batch_size', default=64, type=int, help='train batch size')
 parser.add_argument('--lr', default=1e-4, type=float, help='train learning rate')
 parser.add_argument('--beta1', default=0, type=float, help='Adam optimizer beta1')
 parser.add_argument('--beta2', default=0.9, type=float, help='Adam optimizer beta2')
 parser.add_argument('--load_model', default = 'no', type=str, choices=['yes', 'no'], help='if load previously trained model')
-parser.add_argument('--g_model_name', default='', type=str, help='generator model name')
-parser.add_argument('--ml_model_name', default='', type=str, help='metric learning model name')
+parser.add_argument('--load_model_path', default = '', type=str, help='load model dir path')
+parser.add_argument('--g_model_name', default='Generator64', type=str, help='generator model name')
+parser.add_argument('--ml_model_name', default='ML64', type=str, help='metric learning model name')
 parser.add_argument('--margin', default=1, type=float, help='triplet loss margin')
 parser.add_argument('--alpha', default=1e-2, type=float, help='triplet loss direction guidance weight parameter')
 parser.add_argument('--n_threads', type=int, default=16)
@@ -65,40 +68,47 @@ if __name__ == '__main__':
     margin = opt.margin
     alpha = opt.alpha
     
-    
-    output_path = str(opt.name + '/' + 'imgsize{}_batchsize{}').format(opt.size, opt.batch_size)
+    # Result path    
+    now = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    output_path = str(opt.name + '/' + '{}_{}').format(opt.g_model_name, now)
     if not os.path.exists(output_path):
         os.makedirs(output_path)
     sample_path = output_path           
-
+    
+    # Dataset & Dataloader
     trainset = TrainDatasetFromFolder(opt.data_path, size=SIZE)  
     train_loader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
                                               shuffle=True, num_workers=0)
-
-    use_cuda = torch.cuda.is_available()
-    device = torch.device('cuda' if use_cuda else 'cpu')
     
+    # Device
+    if torch.cuda.is_available():   
+        DEVICE = torch.device('cuda')
+    else:
+        DEVICE = torch.device('cpu')
+    print('Using PyTorch version:', torch.__version__, ' Device:', DEVICE)
+    
+    # Image size
     img_size = (SIZE, SIZE, 3) 
        
     # Generator
-    netG = Generator64().to(device)  
+    netG = Generator64().to(DEVICE)  
     optimizerG = optim.Adam(netG.parameters(), lr = learning_rate, betas=(beta1,beta2),eps= 1e-6) 
     
     # ML
-    netML = ML64(out_dim=out_dim).to(device)      
+    netML = ML64(out_dim=out_dim).to(DEVICE)      
     optimizerML = optim.Adam(netML.parameters(), lr = learning_rate, betas=(0.5,0.999),eps= 1e-3)   
 
     # Losses    
-    triplet_ = TripletLoss(margin, alpha).to(device)    
+    triplet_ = TripletLoss(margin, alpha).to(DEVICE)    
 
 
     if LOAD_MODEL == 'yes':
-        netG.load_state_dict(remove_module_str_in_state_dict(torch.load(str(output_path + "/generator_latest.pt"))))
-        netML.load_state_dict(remove_module_str_in_state_dict(torch.load(str(output_path + "/ml_model_latest.pt")))) 
+        netG.load_state_dict(remove_module_str_in_state_dict(torch.load(str(opt.load_model_path + "/generator_latest.pt"))))
+        netML.load_state_dict(remove_module_str_in_state_dict(torch.load(str(opt.load_model_path + "/ml_model_latest.pt")))) 
         print("LOAD MODEL SUCCESSFULLY")
         
     
-    #fixed_noise1 = gen_rand_noise(1).to(device) 
+    #fixed_noise1 = gen_rand_noise(1).to(DEVICE) 
 
     for epoch in range(1, NUM_EPOCHS + 1):
             
@@ -120,7 +130,7 @@ if __name__ == '__main__':
             requires_grad(netG, False)
             requires_grad(netML, True)                
                 
-            z = torch.randn(batch_size, 128, 1, 1).to(device)          
+            z = torch.randn(batch_size, 128, 1, 1).to(DEVICE)          
             z.requires_grad_(True)            
 
             fake_img = netG(z)
@@ -171,7 +181,7 @@ if __name__ == '__main__':
             if batch_size != opt.batch_size:
                 continue
                 
-            z = torch.randn(batch_size, 128, 1, 1).to(device)
+            z = torch.randn(batch_size, 128, 1, 1).to(DEVICE)
             z.requires_grad_(True)    
             fake_img = netG(z)
             
@@ -231,7 +241,7 @@ if __name__ == '__main__':
         print(' c_dist:',c_dist.item(), ' p_dist:', p_dist.item(),' triplet_loss:',triplet_loss.item())
 
 ###------------------display generated samples--------------------------------------------------
-        fixed_noise = gen_rand_noise(num_samples).to(device)        
+        fixed_noise = gen_rand_noise(num_samples).to(DEVICE)        
         gen_images = generate_image(netG, dim=SIZE, batch_size=num_samples, noise=fixed_noise)
         utils.save_image(gen_images, str(sample_path  +'/' + 'samples_{}.png').format(epoch), nrow=int(sqrt(num_samples)), padding=2)             
         
@@ -248,7 +258,7 @@ if __name__ == '__main__':
 #             requires_grad(netG, False)
 #             requires_grad(netML, True)                
                 
-#             z = torch.randn(batch_size, 128, 1, 1).to(device)          
+#             z = torch.randn(batch_size, 128, 1, 1).to(DEVICE)          
 #             z.requires_grad_(True)            
 
 #             fake_img = netG(z)
