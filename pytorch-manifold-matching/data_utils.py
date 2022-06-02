@@ -58,3 +58,7 @@ def remove_module_str_in_state_dict(state_dict):
         name = k.replace("module.", "") # remove `module.`
         state_dict_rename[name] = v
     return state_dict_rename
+
+def requires_grad(model, tf):   
+    for param in model.parameters():
+        param.requires_grad = tf
