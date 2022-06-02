@@ -27,12 +27,12 @@ from model import Generator64, ML64
 
 
 parser = argparse.ArgumentParser(description='Train Image Generation Models')
-parser.add_argument('--data_path', default='D:\GAN\data\celeb\mini_celeba', type=str, help='dataset path')
+parser.add_argument('--data_path', default='D:\GAN\data\celeb\img_align_celeba', type=str, help='dataset path')
 parser.add_argument('--data_name', default='celeba', type=str, help='dataset name')
 parser.add_argument('--name', default='results', type=str, help='path to store results')
 parser.add_argument('--size', default=64, type=int, help='training images size')
 parser.add_argument('--out_dim', default=10, type=int, help='ML network output dim')
-parser.add_argument('--num_epochs', default=20, type=int, help='train epoch number')
+parser.add_argument('--num_epochs', default=80, type=int, help='train epoch number')
 parser.add_argument('--num_samples', default=64, type=int, help='number of displayed samples')
 parser.add_argument('--batch_size', default=64, type=int, help='train batch size')
 parser.add_argument('--lr', default=1e-4, type=float, help='train learning rate')

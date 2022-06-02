@@ -19,6 +19,8 @@ from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
 import numpy as np
 import matplotlib.pyplot as plt
 
+from sklearn.manifold import MDS, Isomap, TSNE
+
 if torch.cuda.is_available():
     DEVICE = torch.device('cuda')
 else:
@@ -27,8 +29,8 @@ print('Using PyTorch version:', torch.__version__, ' Device:', DEVICE)
 
 # Hyperparameter
 BATCH_SIZE = 256
-NUM_EPOCHS = 10
-EMBEDDING_DIM = 2
+NUM_EPOCHS = 1
+EMBEDDING_DIM = 128
 
 # Model, methods
 class Net(nn.Module):
@@ -76,9 +78,15 @@ def train(model, loss_func, mining_func, device, train_loader, optimizer, epoch)
                 ax = fig.add_subplot(111, projection='3d')
                 ax.scatter(embeddings[:, 0], embeddings[:, 1], 
                             cmap='rainbow', c=temp_label, alpha=0.7, s=10)
-            
+            else:
+                tsne = TSNE(n_components=2, random_state=42)
+                X_reduced_tsne = tsne.fit_transform(embeddings)\
+                    
+                plt.figure(figsize=(figsize, figsize))
+                plt.scatter(X_reduced_tsne[:, 0], X_reduced_tsne[:, 1], c=temp_label, cmap='rainbow', alpha=0.7, s=10)
+                            
             plt.show()
-        ### plot scatter image for batch-1### 
+        ### plot scatter image for 1 batch###
         
         optimizer.zero_grad()
         embeddings = model(data)
@@ -114,7 +122,7 @@ def test(train_set, test_set, model, accuracy_calculator):
 
 
 ### Plot n-dim(n : 2-3) data scatter after train ###
-def plot_after_train(model, n_to_show = 1000, train_or_test = "train"):
+def plot_after_train(model, n_to_show = 1500, train_or_test = "train"):
     grid_size = 15
     figsize = 10
     
@@ -151,7 +159,24 @@ def plot_after_train(model, n_to_show = 1000, train_or_test = "train"):
             ax = fig.add_subplot(111, projection='3d')
             ax.scatter(embeddings[:, 0], embeddings[:, 1], 
                         cmap='rainbow', c=labels, alpha=0.7, s=10)
-        
+        else:
+            tsne = TSNE(n_components=3, random_state=42)
+            X_reduced = tsne.fit_transform(embeddings)
+            
+            #isomap = Isomap(n_components=3)
+            #X_reduced = isomap.fit_transform(embeddings)
+            
+            #mds = MDS(n_components=3, random_state=42)
+            #X_reduced = mds.fit_transform(embeddings)
+                
+            #plt.figure(figsize=(figsize, figsize))
+            #plt.scatter(X_reduced_tsne[:, 0], X_reduced_tsne[:, 1], c=labels, cmap='rainbow', alpha=0.7, s=10)
+            
+            fig = plt.figure(figsize=(figsize, figsize))
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(X_reduced[:, 0], X_reduced[:, 1], X_reduced[:, 2],
+                        cmap='rainbow', c=labels, alpha=0.7, s=10)
+            
         plt.show()    
         break
 
