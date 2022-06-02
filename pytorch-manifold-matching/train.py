@@ -15,19 +15,21 @@ import torchvision.utils as utils
 
 from torch.autograd import Variable, grad as torch_grad
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 from tqdm import tqdm
 import pickle
 import torch.nn.functional as F
 from torch import autograd
 
-from data_utils import *
-from loss import *
+
+from data_utils import is_image_file, train_transform, TrainDatasetFromFolder, \
+                        generate_image, gen_rand_noise, remove_module_str_in_state_dict, requires_grad
+from loss import TripletLoss, pairwise_distances
 from model import Generator64, ML64
 
-
 parser = argparse.ArgumentParser(description='Train Image Generation Models')
-parser.add_argument('--data_path', default='D:\GAN\data\celeb\img_align_celeba', type=str, help='dataset path')
+parser.add_argument('--data_path', default='D:\GAN\data\celeb\mini_celeba', type=str, help='dataset path')
 parser.add_argument('--data_name', default='celeba', type=str, help='dataset name')
 parser.add_argument('--name', default='results', type=str, help='path to store results')
 parser.add_argument('--size', default=64, type=int, help='training images size')
@@ -45,11 +47,6 @@ parser.add_argument('--ml_model_name', default='ML64', type=str, help='metric le
 parser.add_argument('--margin', default=1, type=float, help='triplet loss margin')
 parser.add_argument('--alpha', default=1e-2, type=float, help='triplet loss direction guidance weight parameter')
 parser.add_argument('--n_threads', type=int, default=16)
-
-def requires_grad(model, tf):   
-    for param in model.parameters():
-        param.requires_grad = tf
-
 
 if __name__ == '__main__':
     opt = parser.parse_args()
@@ -73,7 +70,13 @@ if __name__ == '__main__':
     output_path = str(opt.name + '/' + '{}_{}').format(opt.g_model_name, now)
     if not os.path.exists(output_path):
         os.makedirs(output_path)
+    log_path= str(output_path + '/logs')
+    if not os.path.exists(log_path):
+        os.makedirs(log_path)
     sample_path = output_path           
+    
+    # jupyter-tensorboard writer
+    writer = SummaryWriter(log_path)
     
     # Dataset & Dataloader
     trainset = TrainDatasetFromFolder(opt.data_path, size=SIZE)  
@@ -86,10 +89,7 @@ if __name__ == '__main__':
     else:
         DEVICE = torch.device('cpu')
     print('Using PyTorch version:', torch.__version__, ' Device:', DEVICE)
-    
-    # Image size
-    img_size = (SIZE, SIZE, 3) 
-       
+     
     # Generator
     netG = Generator64().to(DEVICE)  
     optimizerG = optim.Adam(netG.parameters(), lr = learning_rate, betas=(beta1,beta2),eps= 1e-6) 
@@ -100,7 +100,6 @@ if __name__ == '__main__':
 
     # Losses    
     triplet_ = TripletLoss(margin, alpha).to(DEVICE)    
-
 
     if LOAD_MODEL == 'yes':
         netG.load_state_dict(remove_module_str_in_state_dict(torch.load(str(opt.load_model_path + "/generator_latest.pt"))))
@@ -230,7 +229,11 @@ if __name__ == '__main__':
             """            
         
             train_bar.set_description(desc='[%d/%d]' % (epoch, NUM_EPOCHS))
-
+        
+        writer.add_scalars("loss/train", {"triplet_loss": triplet_loss, "g_loss": g_loss}, epoch)
+        #writer.add_scalar("triplet_loss/train", triplet_loss, epoch)
+        #writer.add_scalar("g_loss/train", g_loss, epoch)
+        
         if epoch % 5 != 0:
             continue    
         
@@ -250,7 +253,8 @@ if __name__ == '__main__':
         torch.save(netML.state_dict(), str(output_path  +'/' + "ml_model_{}.pt").format(epoch))
         torch.save(netG.state_dict(), str(output_path  +'/' + "generator_latest.pt"))
         torch.save(netML.state_dict(), str(output_path  +'/' + "ml_model_latest.pt"))
-       
+    
+    writer.close()   
 ################################################################## 
 ### The above code is for reproducing results in PyTorch 1.0. For PyTorch with higher versions, one can try replace the main body as follows:
 # 1.  Like in implementation-stylegan2/train_MvM.py:
