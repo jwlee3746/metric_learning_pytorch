@@ -15,7 +15,7 @@ def is_image_file(filename):
 def train_transform(size):
     transform = None
     transform = Compose([
-        Resize(size, interpolation=Image.BICUBIC),
+        Resize((size, size), interpolation=Image.BICUBIC),
         ToTensor()
     ])
     return transform
