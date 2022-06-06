@@ -4,20 +4,21 @@ import random
 import os
 
 import numpy as np
+
 import torch
 from torch import nn, autograd, optim
 from torch.nn import functional as F
 from torch.utils import data
 import torch.distributed as dist
+
 from torchvision import transforms, utils
+
 from tqdm import tqdm
 
 try:
     import wandb
-
 except ImportError:
     wandb = None
-
 
 from dataset import MultiResolutionDataset
 from distributed import (
@@ -27,10 +28,11 @@ from distributed import (
     reduce_sum,
     get_world_size,
 )
+
 from op import conv2d_gradfix
 from non_leaking import augment, AdaptiveAugment
 
-from loss import *
+from loss import TripletLoss, pairwise_distances
 
 from PIL import Image
 import torch.distributed as dist
@@ -380,7 +382,12 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
 
 if __name__ == "__main__":
-    device = "cuda"
+    # Device
+    if torch.cuda.is_available():   
+        DEVICE = torch.device('cuda')
+    else:
+        DEVICE = torch.device('cpu')
+    print('Using PyTorch version:', torch.__version__, ' Device:', DEVICE)
 
     parser = argparse.ArgumentParser(description="StyleGAN2 trainer")
 

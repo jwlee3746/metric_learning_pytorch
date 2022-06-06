@@ -5,23 +5,35 @@ Created on Tue May 31 14:38:27 2022
 @author: Jaewon
 """
 import argparse
-import os
+import os, time, sys
 import datetime
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+import itertools
+import pickle
+from math import log10,exp,sqrt
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 import matplotlib
 import matplotlib.pylab as plt
 
+from torchvision import datasets, transforms
+from torch.autograd import Variable
 from torchvision.utils import make_grid, save_image
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
+import torchvision.utils as utils
 
 from data_utils import TrainDatasetFromFolder
+from model_gan import generator, discriminator
+
+from data_utils import is_image_file, train_transform, TrainDatasetFromFolder, \
+                        generate_image, gen_rand_noise, remove_module_str_in_state_dict, requires_grad
 
 parser = argparse.ArgumentParser(description='Train Image Generation Models')
 parser.add_argument('--data_path', default='D:\GAN\data\celeb\mini_celeba', type=str, help='dataset path')
@@ -29,12 +41,11 @@ parser.add_argument('--data_name', default='celeba', type=str, help='dataset nam
 parser.add_argument('--name', default='results', type=str, help='path to store results')
 parser.add_argument('--size', default=64, type=int, help='training images size')
 parser.add_argument('--nz', default=128, type=int, help='Latent Vector dim')
-parser.add_argument('--out_dim', default=10, type=int, help='ML network output dim')
-parser.add_argument('--num_epochs', default=80, type=int, help='train epoch number')
+parser.add_argument('--num_epochs', default=20, type=int, help='train epoch number')
 parser.add_argument('--num_samples', default=64, type=int, help='number of displayed samples')
-parser.add_argument('--batch_size', default=64, type=int, help='train batch size')
+parser.add_argument('--batch_size', default=128, type=int, help='train batch size')
 parser.add_argument('--k', default=1, type=float, help='num training descriminator')
-parser.add_argument('--lr', default=1e-4, type=float, help='train learning rate')
+parser.add_argument('--lr', default=1e-2, type=float, help='train learning rate')
 parser.add_argument('--beta1', default=0, type=float, help='Adam optimizer beta1')
 parser.add_argument('--beta2', default=0.9, type=float, help='Adam optimizer beta2')
 parser.add_argument('--load_model', default = 'no', type=str, choices=['yes', 'no'], help='if load previously trained model')
@@ -48,7 +59,6 @@ if __name__ == '__main__':
     opt = parser.parse_args()
     
     SIZE = opt.size
-    out_dim = opt.out_dim
     learning_rate = opt.lr
     beta1 = opt.beta1
     beta2 = opt.beta2
@@ -61,12 +71,18 @@ if __name__ == '__main__':
     margin = opt.margin
     alpha = opt.alpha
     
-    # Result path
+    # Result path    
     now = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     output_path = str(opt.name + '/' + '{}_{}').format(opt.g_model_name, now)
     if not os.path.exists(output_path):
         os.makedirs(output_path)
+    log_path= str(output_path + '/logs')
+    if not os.path.exists(log_path):
+        os.makedirs(log_path)
     sample_path = output_path           
+    
+    # jupyter-tensorboard writer
+    writer = SummaryWriter(log_path)    
     
     # Dataset & Dataloader
     train_dataset = TrainDatasetFromFolder(opt.data_path, size=SIZE)  
@@ -80,131 +96,99 @@ if __name__ == '__main__':
         DEVICE = torch.device('cpu')
     print('Using PyTorch version:', torch.__version__, ' Device:', DEVICE)
     
-    # Image size
-    img_size = (SIZE, SIZE, 3) 
+    # network
+    netG = generator(128)
+    netD = discriminator(128)
+    netG.weight_init(mean=0.0, std=0.02)
+    netD.weight_init(mean=0.0, std=0.02)
+    netG.to(DEVICE) 
+    netD.to(DEVICE) 
+    
+    # Binary Cross Entropy loss
+    BCE_loss = nn.BCELoss().to(DEVICE) 
+    
+    # Adam optimizer
+    G_optimizer = optim.Adam(netG.parameters(), lr=learning_rate, betas=(0.5, 0.999))
+    D_optimizer = optim.Adam(netD.parameters(), lr=learning_rate, betas=(0.5, 0.999))
+    
+    # Train
+    for epoch in range(1, NUM_EPOCHS + 1):
+            
+        train_bar = tqdm(train_loader) 
+    
+        netG.train()
+        netD.train()    
+    
+        for target in train_bar:            
+            real_img = Variable(target).to(DEVICE)           
+                
+            batch_size = real_img.size()[0]
+            if batch_size != opt.batch_size:
+                continue
+            
+            ############################ 
+            # train discriminator D
+            ############################                                        
+            requires_grad(netG, False)
+            requires_grad(netD, True)
+    
+            y_real_ = torch.ones(batch_size).to(DEVICE) 
+            y_fake_ = torch.zeros(batch_size).to(DEVICE) 
+                                        
+            D_real_result = netD(real_img).squeeze()
+            D_real_loss = BCE_loss(D_real_result, y_real_)
+    
+            z_ = torch.randn((batch_size, 128)).view(-1, 128, 1, 1).to(DEVICE)      
+            z_.requires_grad_(True)
+            G_result = netG(z_)
+    
+            D_fake_result = netD(G_result).squeeze()
+            D_fake_loss = BCE_loss(D_fake_result, y_fake_)
+            D_fake_score = D_fake_result.data.mean()
+    
+            D_train_loss = D_real_loss + D_fake_loss
+    
+            netD.zero_grad()
+            D_train_loss.backward()
+            D_optimizer.step()
+    
+    
+            ############################ 
+            # train generator G
+            ############################         
+            requires_grad(netG, True)
+            requires_grad(netD, False)
+    
+            G_result = netG(z_)
+            D_result = netD(G_result).squeeze()
+            
+            G_train_loss = BCE_loss(D_result, y_real_)
+            
+            netG.zero_grad()  
+            G_train_loss.backward()
+            G_optimizer.step()   
+            
+            train_bar.set_description(desc='[%d/%d]' % (epoch, NUM_EPOCHS))
+        
+        print(' D_train_loss:', D_train_loss.item(), ' G_train_loss:', G_train_loss.item())
+        writer.add_scalars("loss/train", {"d_loss": D_train_loss, "g_loss": G_train_loss}, epoch)
+        #writer.add_scalar("triplet_loss/train", triplet_loss, epoch)
+        #writer.add_scalar("g_loss/train", g_loss, epoch)
+        
+        if epoch % 2 != 0:
+            continue    
 
-    # Model
-    class Generator(nn.Module):
-        def __init__(self, nz):
-            super(Generator, self).__init__()
-            self.nz = nz
-            self.main = nn.Sequential(
-                nn.Linear(self.nz, 256),
-                nn.LeakyReLU(0.2),
-                nn.Linear(256, 512),
-                nn.LeakyReLU(0.2),
-                nn.Linear(512, 1024),
-                nn.LeakyReLU(0.2),
-                nn.Linear(1024, 784),
-                nn.Tanh(),
-            )
-        def forward(self, x):
-            return self.main(x).view(-1, 1, 28, 28)
+###------------------display generated samples--------------------------------------------------        
+        fixed_noise = gen_rand_noise(num_samples).to(DEVICE) 
+        gen_images = generate_image(netG, dim=SIZE, batch_size=num_samples, noise=fixed_noise)
+        utils.save_image(gen_images, str(sample_path  +'/' + 'samples_{}.png').format(epoch), nrow=int(sqrt(num_samples)), padding=2)             
         
-    class Discriminator(nn.Module):
-        def __init__(self):
-            super(Discriminator, self).__init__()
-            self.n_input = 784
-            self.main = nn.Sequential(
-                nn.Linear(self.n_input, 1024),
-                nn.LeakyReLU(0.2),
-                nn.Dropout(0.3),
-                nn.Linear(1024, 512),
-                nn.LeakyReLU(0.2),
-                nn.Dropout(0.3),
-                nn.Linear(512, 256),
-                nn.LeakyReLU(0.2),
-                nn.Dropout(0.3),
-                nn.Linear(256, 1),
-                nn.Sigmoid(),
-            )
-        def forward(self, x):
-            x = x.view(-1, 784)
-            return self.main(x)
+        if epoch % 10 != 0:
+            continue    
+# 	#----------------------Save model----------------------
+        torch.save(netG.state_dict(), str(output_path  +'/' + "generator_{}.pt").format(epoch))
+        torch.save(netD.state_dict(), str(output_path  +'/' + "d_model_{}.pt").format(epoch))
+        torch.save(netG.state_dict(), str(output_path  +'/' + "generator_latest.pt"))
+        torch.save(netD.state_dict(), str(output_path  +'/' + "d_model_latest.pt"))
     
-    def save_generator_image(image, path):
-        save_image(image, path)
-    
-    
-    def train_discriminator(optimizer, data_real, data_fake):
-        b_size = data_real.size(0)
-        
-        real_label = torch.ones(b_size, 1).to(DEVICE)
-        fake_label = torch.zeros(b_size, 1).to(DEVICE)
-        
-        optimizer.zero_grad()
-        output_real = discriminator(data_real)
-        loss_real = criterion(output_real, real_label)
-        output_fake = discriminator(data_fake)
-        loss_fake = criterion(output_fake, fake_label)
-        
-        loss_real.backward()
-        loss_fake.backward()
-        optimizer.step()
-        return loss_real + loss_fake
-    
-    def train_generator(optimizer, data_fake):
-        b_size = data_fake.size(0)
-        
-        real_label = torch.ones(b_size, 1).to(DEVICE)
-        
-        optimizer.zero_grad()
-        output = discriminator(data_fake)
-        
-        loss = criterion(output, real_label)
-        loss.backward()
-        optimizer.step()
-        return loss
-    
-    ### Traing ###
-    generator = Generator(opt.nz).to(DEVICE)
-    discriminator = Discriminator().to(DEVICE)
-    
-    optim_g = optim.Adam(generator.parameters(), lr = opt.lr)
-    optim_d = optim.Adam(discriminator.parameters(), lr = opt.lr)
-    
-    criterion = nn.BCELoss()
-    
-    losses_g = [] 
-    losses_d = [] 
-    images = [] 
-    
-    generator.train()
-    discriminator.train()
-    
-    for epoch in range(opt.num_epochs):
-        loss_g = 0.0
-        loss_d = 0.0
-        for idx, data in tqdm(enumerate(train_loader), total=int(len(train_dataset)/train_loader.batch_size)):
-            image = data
-            image = image.to(DEVICE)
-            b_size = len(image)
-            for step in range(opt.k):                                
-                data_fake = generator(torch.randn(b_size, opt.nz).to(DEVICE)).detach()
-                data_real = image
-                loss_d += train_discriminator(optim_d, data_real, data_fake)
-            data_fake = generator(torch.randn(b_size, opt.nz).to(DEVICE))
-            loss_g += train_generator(optim_g, data_fake)
-    
-        epoch_loss_g = loss_g / idx 
-        epoch_loss_d = loss_d / idx 
-        losses_g.append(epoch_loss_g)
-        losses_d.append(epoch_loss_d)
-        print(f"Epoch {epoch} of {opt.num_epochs}")
-        print(f"Generator loss: {epoch_loss_g:.8f}, Discriminator loss: {epoch_loss_d:.8f}")
-        
-        if epoch % 5 != 0:
-            continue
-        ###------------------display generated samples--------------------------------------------------    
-        generated_img = generator(torch.randn(b_size, opt.nz).to(DEVICE)).cpu().detach()
-        generated_img = make_grid(generated_img)
-        save_generator_image(generated_img, f"./images/gen_img{epoch}.png")
-        images.append(generated_img)
-    
-    ### Plot loss-graph        
-    plt.figure()
-    losses_g = [fl.item() for fl in losses_g ]
-    plt.plot(losses_g, label='Generator loss')
-    losses_d = [f2.item() for f2 in losses_d ]
-    plt.plot(losses_d, label='Discriminator Loss')
-    plt.legend() 
+    writer.close()

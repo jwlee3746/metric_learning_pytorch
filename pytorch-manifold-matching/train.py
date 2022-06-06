@@ -234,13 +234,12 @@ if __name__ == '__main__':
         #writer.add_scalar("triplet_loss/train", triplet_loss, epoch)
         #writer.add_scalar("g_loss/train", g_loss, epoch)
         
-        if epoch % 5 != 0:
+        if epoch % 2 != 0:
             continue    
         
 ###--------------------Hausdorff distance----------------------------------------
         h_distance, idx1, idx2 = scipy.spatial.distance.directed_hausdorff(ml_real_out.clone().cpu().detach().numpy(), ml_fake_out.clone().cpu().detach().numpy(), seed=0)
         print('hausdorff distance: ', h_distance)        
-            
         print(' c_dist:',c_dist.item(), ' p_dist:', p_dist.item(),' triplet_loss:',triplet_loss.item())
 
 ###------------------display generated samples--------------------------------------------------
@@ -248,6 +247,8 @@ if __name__ == '__main__':
         gen_images = generate_image(netG, dim=SIZE, batch_size=num_samples, noise=fixed_noise)
         utils.save_image(gen_images, str(sample_path  +'/' + 'samples_{}.png').format(epoch), nrow=int(sqrt(num_samples)), padding=2)             
         
+        if epoch % 10 != 0:
+            continue    
 # 	#----------------------Save model----------------------
         torch.save(netG.state_dict(), str(output_path  +'/' + "generator_{}.pt").format(epoch))
         torch.save(netML.state_dict(), str(output_path  +'/' + "ml_model_{}.pt").format(epoch))
