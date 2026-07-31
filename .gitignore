@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Datasets (torchvision이 자동 다운로드 / CelebA는 별도 준비)
+data/
+*.idx3-ubyte
+*.idx1-ubyte
+
+# 학습 산출물
+results/
+runs/
+*.pt
+*.pth
+events.out.tfevents.*
+
+# 환경
+.venv/
+venv/
+.env
